@@ -1,0 +1,169 @@
+# SPDX-License-Identifier: MIT
+#
+# Builds the /usr/local tarball with ./build.sh, smoke-tests it in
+# debian:trixie-slim, and collects the corresponding source for the GPL
+# components. A pushed v* tag publishes everything as a GitHub release;
+# a manual run only uploads a workflow artifact.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned versions
+        id: v
+        run: |
+          arg() { sed -n "s/^ARG $1=//p" Containerfile; }
+          libkrunfw=$(arg LIBKRUNFW_VERSION)
+          libkrun=$(arg LIBKRUN_VERSION)
+          crun=$(arg CRUN_VERSION)
+          {
+            echo "libkrunfw=$libkrunfw"
+            echo "libkrun=$libkrun"
+            echo "crun=$crun"
+            echo "base=podman-krun-debian13-amd64-crun${crun#v}-libkrun${libkrun#v}-libkrunfw${libkrunfw#v}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          podman --version
+          ./build.sh
+          mkdir dist
+          gzip -9 -c usr-local.tar > "dist/${{ steps.v.outputs.base }}.tar.gz"
+
+      - name: Smoke test in debian:trixie-slim
+        env:
+          TARBALL: ${{ steps.v.outputs.base }}.tar.gz
+        run: |
+          podman run --rm -e TARBALL -v "$PWD/dist:/dist:ro" \
+            docker.io/library/debian:trixie-slim sh -euc '
+              apt-get update -qq
+              apt-get install -y -qq --no-install-recommends \
+                  libsystemd0 libseccomp2 libcap2 libjson-c5 > /dev/null
+              tar -C / -xzf "/dist/$TARBALL"
+              ldconfig
+              crun --version
+              crun --version | grep -q +LIBKRUN
+              [ "$(readlink /usr/local/bin/krun)" = crun ]
+              for lib in libkrun.so.1 libkrunfw.so.5; do
+                  ldconfig -p | grep -q "$lib "
+              done
+              if ldd /usr/local/bin/crun /usr/local/lib/x86_64-linux-gnu/libkrun.so.1 | grep "not found"; then
+                  exit 1
+              fi
+            '
+
+      # GPLv2 requires the corresponding source to accompany the binaries:
+      # crun (GPL-2.0-or-later) and the Linux kernel inside libkrunfw.
+      - name: Collect sources
+        id: src
+        env:
+          LIBKRUNFW: ${{ steps.v.outputs.libkrunfw }}
+          LIBKRUN: ${{ steps.v.outputs.libkrun }}
+          CRUN: ${{ steps.v.outputs.crun }}
+        run: |
+          mkdir sources
+          source_tarball() {
+            name=$1-${2#v}
+            shift 2
+            git -c advice.detachedHead=false clone -q --depth 1 "$@" "sources/$name"
+            tar -C sources --exclude=.git -czf "dist/$name-source.tar.gz" "$name"
+          }
+          source_tarball libkrunfw "$LIBKRUNFW" --branch "$LIBKRUNFW" https://github.com/libkrun/libkrunfw.git
+          source_tarball libkrun "$LIBKRUN" --branch "$LIBKRUN" https://github.com/libkrun/libkrun.git
+          source_tarball crun "$CRUN" --branch "$CRUN" --recurse-submodules --shallow-submodules \
+              https://github.com/containers/crun.git
+
+          kernel=$(sed -n 's/^KERNEL_VERSION = //p' "sources/libkrunfw-${LIBKRUNFW#v}/Makefile")
+          major=$(echo "$kernel" | sed 's/^linux-\([0-9]*\)\..*/\1/')
+          curl -fsSL -o "dist/$kernel.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v$major.x/$kernel.tar.xz"
+          echo "kernel=${kernel#linux-}" >> "$GITHUB_OUTPUT"
+
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          ls -l dist
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.v.outputs.base }}
+          path: dist/
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ steps.v.outputs.base }}
+          KERNEL: ${{ steps.src.outputs.kernel }}
+          LIBKRUNFW: ${{ steps.v.outputs.libkrunfw }}
+          LIBKRUN: ${{ steps.v.outputs.libkrun }}
+          CRUN: ${{ steps.v.outputs.crun }}
+        run: |
+          url="https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME"
+          cat > notes.md <<EOF
+          Prebuilt crun with libkrun support for **Debian 13 (trixie), amd64**: run
+          Podman containers in KVM microVMs with \`--runtime krun\`.
+
+          | Component | Version |
+          |---|---|
+          | crun | $CRUN |
+          | libkrun | $LIBKRUN |
+          | libkrunfw | $LIBKRUNFW (guest kernel $KERNEL) |
+
+          ## Install
+
+          \`\`\`sh
+          curl -fLO $url/$BASE.tar.gz
+          curl -fLO $url/SHA256SUMS
+          sha256sum --check --ignore-missing SHA256SUMS
+          gh attestation verify $BASE.tar.gz --repo $GITHUB_REPOSITORY   # optional, needs gh
+          sudo tar -C / -xzf $BASE.tar.gz
+          sudo /sbin/ldconfig
+          \`\`\`
+
+          Everything installs under \`/usr/local\`. With a clone of this repository,
+          \`./install.sh $BASE.tar.gz\` does the unpack and runs the test.
+
+          ## Verify
+
+          \`\`\`sh
+          podman run --rm --runtime krun docker.io/library/alpine uname -r
+          \`\`\`
+
+          Expected output: **\`$KERNEL\`**, the guest kernel, not your host kernel.
+          \`./test.sh\` from this repository checks the whole chain.
+
+          ## Requirements
+
+          - Debian 13 (trixie) on amd64. The binaries link against trixie's
+            \`libsystemd0\`, \`libseccomp2\`, \`libcap2\` and \`libjson-c5\`;
+            other distributions are untested.
+          - Podman, and read/write access to \`/dev/kvm\`.
+
+          ## Source
+
+          crun is GPL-2.0-or-later (libcrun LGPL-2.1-or-later), libkrun is
+          Apache-2.0, and libkrunfw is LGPL-2.1-only with a GPL-2.0-only Linux
+          kernel inside. The corresponding source is attached to this release:
+          the \`*-source.tar.gz\` files and the kernel tarball. The build
+          scripts are this repository's \`Containerfile\` at $GITHUB_REF_NAME.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME: crun $CRUN, libkrun ${LIBKRUN#v}, libkrunfw ${LIBKRUNFW#v}" \
+              --notes-file notes.md

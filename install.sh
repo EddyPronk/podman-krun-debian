@@ -2,15 +2,18 @@
 # SPDX-License-Identifier: MIT
 set -e
 
-cd "$(dirname "$0")"
+# Usage: ./install.sh [tarball]
+# Defaults to the usr-local.tar written by ./build.sh; a downloaded release
+# tarball (.tar.gz) works too.
+tarball=${1:-$(dirname "$0")/usr-local.tar}
 
-if [ ! -f usr-local.tar ]; then
-    echo "usr-local.tar not found; run ./build.sh first" >&2
+if [ ! -f "$tarball" ]; then
+    echo "$tarball not found; run ./build.sh first or pass a release tarball" >&2
     exit 1
 fi
 
 # The tarball's paths are usr/local/..., so it unpacks relative to /.
-sudo tar -C / -xf usr-local.tar
+sudo tar -C / -xf "$tarball"
 sudo /sbin/ldconfig
 
-./test.sh
+"$(dirname "$0")/test.sh"

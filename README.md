@@ -15,7 +15,25 @@ podman ──► crun (+LIBKRUN, invoked as "krun") ──dlopen──► libkru
                                                           (VMM)                    (guest kernel)
 ```
 
-## Quick start
+## Download a release
+
+Each [release](https://github.com/EddyPronk/podman-krun-debian/releases)
+has a prebuilt tarball for Debian 13 on amd64, named after what's in it,
+e.g. `podman-krun-debian13-amd64-crun1.30.1-libkrun1.19.6-libkrunfw5.6.2.tar.gz`.
+The release notes give the exact commands. In short: download the tarball
+and `SHA256SUMS`, check them, then from a clone of this repository:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+./install.sh podman-krun-debian13-amd64-*.tar.gz
+```
+
+Releases are built by GitHub Actions from the `Containerfile`, carry
+[build provenance attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
+(`gh attestation verify <tarball> --repo EddyPronk/podman-krun-debian`),
+and include the corresponding source for the GPL components.
+
+## Build it yourself
 
 ```sh
 ./build.sh      # podman build → usr-local.tar (no root needed)
@@ -131,7 +149,8 @@ configuration file.
 |---|---|
 | `Containerfile` | Builds libkrunfw, libkrun 1.x and crun in `debian:trixie-slim`, exports `/usr/local` |
 | `build.sh` | Runs the container build, writes `usr-local.tar` |
-| `install.sh` | Unpacks `usr-local.tar` into `/usr/local` with sudo, then runs `test.sh` |
+| `install.sh` | Unpacks `usr-local.tar`, or a release tarball given as argument, into `/usr/local` with sudo, then runs `test.sh` |
+| `.github/workflows/release.yml` | Builds, smoke-tests and publishes a release for each `v*` tag |
 | `test.sh` | Checks the installed stack end to end |
 | [INSTALL.md](INSTALL.md) | Versions, dependencies, Debian-specific fixes, manual build |
 
@@ -140,6 +159,10 @@ configuration file.
 The scripts and documentation in this repository are [MIT](LICENSE)
 licensed. The software they build keeps its own licenses: crun is
 GPL-2.0-or-later (libcrun LGPL-2.1-or-later), libkrun is Apache-2.0, and
-libkrunfw is LGPL-2.1-only with a GPL-2.0-only Linux kernel inside. This
-repository contains no binaries. Don't redistribute `usr-local.tar` without
-meeting those licenses' terms.
+libkrunfw is LGPL-2.1-only with a GPL-2.0-only Linux kernel inside.
+
+The git repository contains no binaries. Each release attaches the
+corresponding source next to the prebuilt tarball: source archives of
+crun, libkrun and libkrunfw at the pinned tags, and the Linux kernel
+tarball. If you redistribute a tarball you built yourself, you take on
+the same obligations.
