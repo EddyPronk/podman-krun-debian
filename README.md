@@ -33,6 +33,15 @@ Releases are built by GitHub Actions from the `Containerfile`, carry
 (`gh attestation verify <tarball> --repo EddyPronk/podman-krun-debian`),
 and include the corresponding source for the GPL components.
 
+`gh attestation` needs gh 2.49 or newer. Debian trixie ships gh 2.46,
+which doesn't have the command and prints its general help text instead.
+Install a newer gh from the
+[gh releases](https://github.com/cli/cli/releases) or
+[GitHub's apt repository](https://cli.github.com), or skip attestation
+verification; the `SHA256SUMS` check works without it. A successful
+`gh attestation verify` prints nothing when not run in a terminal; check
+its exit code.
+
 ## Build it yourself
 
 ```sh

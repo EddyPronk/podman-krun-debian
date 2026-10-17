@@ -122,9 +122,9 @@ jobs:
 
           | Component | Version |
           |---|---|
-          | crun | $CRUN |
-          | libkrun | $LIBKRUN |
-          | libkrunfw | $LIBKRUNFW (guest kernel $KERNEL) |
+          | crun | ${CRUN#v} |
+          | libkrun | ${LIBKRUN#v} |
+          | libkrunfw | ${LIBKRUNFW#v} (guest kernel $KERNEL) |
 
           ## Install
 
@@ -132,10 +132,14 @@ jobs:
           curl -fLO $url/$BASE.tar.gz
           curl -fLO $url/SHA256SUMS
           sha256sum --check --ignore-missing SHA256SUMS
-          gh attestation verify $BASE.tar.gz --repo $GITHUB_REPOSITORY   # optional, needs gh
+          gh attestation verify $BASE.tar.gz --repo $GITHUB_REPOSITORY   # optional, needs gh >= 2.49
           sudo tar -C / -xzf $BASE.tar.gz
           sudo /sbin/ldconfig
           \`\`\`
+
+          \`gh attestation\` needs gh 2.49 or newer; Debian trixie ships 2.46. Get a
+          newer gh from https://github.com/cli/cli/releases or https://cli.github.com,
+          or skip that line: the checksum check doesn't need it.
 
           Everything installs under \`/usr/local\`. With a clone of this repository,
           \`./install.sh $BASE.tar.gz\` does the unpack and runs the test.
